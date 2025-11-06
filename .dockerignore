@@ -1,0 +1,37 @@
+﻿# VCS & IDE
+.git
+.gitignore
+.gitattributes
+.vscode
+.idea
+*.code-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.venv/
+.env
+*.log
+
+# Frontend / Node (jika repo gabung)
+node_modules/
+npm-debug.log*
+yarn.lock
+pnpm-lock.yaml
+dist/
+build/
+.cache/
+.next/
+out/
+coverage/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
