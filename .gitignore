@@ -1,0 +1,18 @@
+# ---- secrets / keys ----
+.env
+credentials.json
+*.pem
+*.key
+*.p12
+*.crt
+
+# ---- python ----
+__pycache__/
+*.pyc
+.venv/
+
+# ---- common junk ----
+node_modules/
+dist/
+build/
+.DS_Store
