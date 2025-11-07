@@ -1,4 +1,3 @@
-# server.py
 from fastapi import FastAPI, APIRouter, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
@@ -8,6 +7,7 @@ from pathlib import Path
 import logging
 import subprocess
 import os
+import importlib
 
 # -----------------------------------------------------------------------------
 # Init & ENV
@@ -47,7 +47,7 @@ else:
         db = None
 
 # -----------------------------------------------------------------------------
-# FastAPI app with API prefix & docs under /api
+# FastAPI app (docs under /api)
 # -----------------------------------------------------------------------------
 app = FastAPI(
     title=APP_NAME,
@@ -57,15 +57,14 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-api_router = APIRouter(prefix="/api")
+api = APIRouter(prefix="/api")
 
 # -----------------------------------------------------------------------------
 # CORS
 # -----------------------------------------------------------------------------
 raw_origins = os.getenv("FRONTEND_URL", "").strip()
-allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()] if raw_origins else []
-if not allow_origins:
-    allow_origins = ["*"]
+allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()] or ["*"]
+if allow_origins == ["*"]:
     logger.warning("FRONTEND_URL not set → CORS allow_origins='*' (dev mode)")
 
 app.add_middleware(
@@ -77,9 +76,9 @@ app.add_middleware(
 )
 
 # -----------------------------------------------------------------------------
-# ROUTES: root (sanity) & health
+# Health & root
 # -----------------------------------------------------------------------------
-@api_router.get("/", include_in_schema=False)
+@api.get("/", include_in_schema=False)
 async def root():
     return {"message": f"Hello From {APP_NAME} {APP_VERSION}"}
 
@@ -92,7 +91,7 @@ async def _mongo_ping_ok() -> tuple[bool, str]:
     except Exception as e:
         return False, f"mongo fail: {e}"
 
-@api_router.get("/health", include_in_schema=False)
+@api.get("/health", include_in_schema=False)
 async def health():
     return {
         "status": "ok",
@@ -104,7 +103,7 @@ async def health():
         },
     }
 
-@api_router.get("/health/deep", include_in_schema=False)
+@api.get("/health/deep", include_in_schema=False)
 async def health_deep():
     mongo_ok, mongo_msg = await _mongo_ping_ok()
     midtrans_key = "set" if os.getenv("MIDTRANS_SERVER_KEY") else "missing"
@@ -123,31 +122,33 @@ async def health_deep():
     )
 
 # -----------------------------------------------------------------------------
-# Import & include sub-routers (TANPA games)
+# SAFE include routers (tanpa from routes import ...)
 # -----------------------------------------------------------------------------
-from routes import (
-    ebooks,
-    orders,
-    webhooks,
-    proxy,
-    admin,
-    game_access,
-    test_notifications,
-)
+def include_router_safe(module_path: str, attr: str = "router"):
+    """
+    Import aman: jika modul tidak ada/ error, hanya log warning—tidak mematikan server.
+    """
+    try:
+        mod = importlib.import_module(module_path)
+        router = getattr(mod, attr)
+        api.include_router(router)
+        logger.info(f"Included {module_path}.{attr}")
+    except Exception as e:
+        logger.warning(f"Skip {module_path}.{attr}: {e}")
 
-api_router.include_router(ebooks.router)
-api_router.include_router(orders.router)
-api_router.include_router(webhooks.router)
-api_router.include_router(proxy.router)
-api_router.include_router(admin.router)
-api_router.include_router(game_access.router)
-api_router.include_router(test_notifications.router)
+# HANYA modul yang ada. Jangan menyebut 'games' atau 'game_access'.
+include_router_safe("routes.ebooks")               # routes/ebooks.py -> router
+include_router_safe("routes.orders")
+include_router_safe("routes.webhooks")
+include_router_safe("routes.proxy")
+include_router_safe("routes.admin")
+include_router_safe("routes.test_notifications")
 
-# Daftarkan api_router ke app utama
-app.include_router(api_router)
+# Daftarkan API group ke app
+app.include_router(api)
 
 # -----------------------------------------------------------------------------
-# Startup tasks (auto-seed jika DB kosong)
+# Startup: auto-seed jika DB kosong
 # -----------------------------------------------------------------------------
 @app.on_event("startup")
 async def startup_db_seed():
@@ -174,7 +175,7 @@ async def startup_db_seed():
         logger.error(f"Error during startup seed check: {e}")
 
 # -----------------------------------------------------------------------------
-# Shutdown (tutup koneksi)
+# Shutdown
 # -----------------------------------------------------------------------------
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -185,6 +186,7 @@ async def shutdown_db_client():
     except Exception as e:
         logger.error(f"Error on MongoDB client close: {e}")
 
-# Tips run:
+# ----------------------------------------------------------------------------- 
+# Run hint:
 # uvicorn server:app --host 0.0.0.0 --port 8000
-# Swagger: /api/docs | OpenAPI: /api/openapi.json | Health: /api/health, /api/health/deep
+# -----------------------------------------------------------------------------
