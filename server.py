@@ -1,6 +1,7 @@
+# server.py
 from fastapi import FastAPI, APIRouter, status
 from fastapi.responses import JSONResponse
-from starlette.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
@@ -8,6 +9,7 @@ import logging
 import subprocess
 import os
 import importlib
+from typing import Optional
 
 # -----------------------------------------------------------------------------
 # Init & ENV
@@ -31,7 +33,7 @@ logger.warning(f"Starting {APP_NAME} → APP_VERSION={APP_VERSION}")
 MONGO_URL = os.getenv("MONGO_URL")
 DB_NAME = os.getenv("DB_NAME")
 
-client: AsyncIOMotorClient | None = None
+client: Optional[AsyncIOMotorClient] = None
 db = None
 
 if not MONGO_URL or not DB_NAME:
@@ -57,27 +59,48 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-api = APIRouter(prefix="/api")
-
 # -----------------------------------------------------------------------------
-# CORS
+# CORS (PASANG SEDINI MUNGKIN)
 # -----------------------------------------------------------------------------
-raw_origins = os.getenv("FRONTEND_URL", "").strip()
-allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()] or ["*"]
-if allow_origins == ["*"]:
-    logger.warning("FRONTEND_URL not set → CORS allow_origins='*' (dev mode)")
+# FRONTEND_URL dapat diisi koma-separated di Render Env, mis:
+# https://ebookanak.store, https://www.ebookanak.store, https://<preview>.preview.emergentagent.com
+raw_origins = (os.getenv("FRONTEND_URL", "") or "").strip()
+env_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
+# Fallback aman (produksi + contoh preview). Ganti/ tambah sesuai kebutuhanmu.
+fallback_origins = [
+    "https://ebookanak.store",
+    "https://www.ebookanak.store",
+    # isi preview kamu saat ini agar langsung jalan:
+    "https://pelangi-ecom-debug.preview.emergentagent.com",
+]
+
+allow_origins = env_origins or fallback_origins
+
+# Untuk kasus domain preview yang sering berubah, kita sediakan regex ini.
+# (Boleh dibiarkan; tidak wajib terpakai jika allow_origins sudah cukup.)
+allow_origin_regex = r"https://([a-z0-9-]+)\.preview\.emergentagent\.com"
+
+logger.info(f"CORS allow_origins={allow_origins}")
+logger.info(f"CORS allow_origin_regex={allow_origin_regex}")
+
+# PENTING:
+# - Jangan set allow_credentials=True bila pakai wildcard "*"
+# - Di sini kita TIDAK pakai wildcard dan pakai credentials=False (karena kita tidak kirim cookie)
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
     allow_origins=allow_origins,
-    allow_methods=["*"],
+    allow_origin_regex=allow_origin_regex,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    allow_credentials=False,
 )
 
 # -----------------------------------------------------------------------------
-# Health & root
+# API Router (prefix /api)
 # -----------------------------------------------------------------------------
+api = APIRouter(prefix="/api")
+
 @api.get("/", include_in_schema=False)
 async def root():
     return {"message": f"Hello From {APP_NAME} {APP_VERSION}"}
@@ -122,7 +145,7 @@ async def health_deep():
     )
 
 # -----------------------------------------------------------------------------
-# SAFE include routers (tanpa from routes import ...)
+# SAFE include routers (tanpa from routes import ... langsung pecah)
 # -----------------------------------------------------------------------------
 def include_router_safe(module_path: str, attr: str = "router"):
     """
@@ -136,7 +159,7 @@ def include_router_safe(module_path: str, attr: str = "router"):
     except Exception as e:
         logger.warning(f"Skip {module_path}.{attr}: {e}")
 
-# HANYA modul yang ada. Jangan menyebut 'games' atau 'game_access'.
+# HANYA modul yang ada. Jangan menyebut 'games' atau 'game_access' jika sudah dihapus.
 include_router_safe("routes.ebooks")               # routes/ebooks.py -> router
 include_router_safe("routes.orders")
 include_router_safe("routes.webhooks")
@@ -144,7 +167,7 @@ include_router_safe("routes.proxy")
 include_router_safe("routes.admin")
 include_router_safe("routes.test_notifications")
 
-# Daftarkan API group ke app
+# Daftarkan API group ke app (setelah middleware terpasang)
 app.include_router(api)
 
 # -----------------------------------------------------------------------------
@@ -186,7 +209,7 @@ async def shutdown_db_client():
     except Exception as e:
         logger.error(f"Error on MongoDB client close: {e}")
 
-# ----------------------------------------------------------------------------- 
-# Run hint:
-# uvicorn server:app --host 0.0.0.0 --port 8000
+# -----------------------------------------------------------------------------
+# Run hint (Render Docker Command):
+# uvicorn server:app --host 0.0.0.0 --port $PORT
 # -----------------------------------------------------------------------------
